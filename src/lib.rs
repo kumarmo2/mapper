@@ -1,35 +1,79 @@
 #[macro_use]
 use proc_macro::TokenStream;
-use proc_macro2::TokenTree as TokenTree2;
+use proc_macro2::{TokenStream as TokenStream2, TokenTree as TokenTree2};
+use quote::quote;
 
-use syn::{parse_macro_input, Attribute, DeriveInput, Ident};
+use syn::{
+    parse_macro_input, Attribute, Data, DataStruct, DeriveInput, Fields, FieldsNamed, Ident,
+};
 
 #[proc_macro_derive(Mapper, attributes(from))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
-    /*
-        let from_ident;
+    let from_ident;
+    let data: DataStruct;
+    let named_fields: FieldsNamed;
 
-        if let Some(ident) = get_from_ident(&ast.attrs) {
-            from_ident = ident;
-        } else {
-            panic!("problem with from attribute");
+    match ast.data {
+        Data::Struct(d) => {
+            data = d;
         }
-    */
-    get_from_ident(&ast.attrs);
+        _ => {
+            panic!("Currently only supports Structs");
+        }
+    }
 
-    println!("ast: {:#?}", ast);
-    TokenStream::new()
+    match data.fields {
+        Fields::Named(f) => named_fields = f,
+        _ => panic!("only named fields are required"),
+    }
+
+    let fields_init: Vec<TokenStream2> = named_fields
+        .named
+        .clone()
+        .into_iter()
+        .map(|f| {
+            let ident = f.ident;
+            quote! {
+                #ident: source.#ident,
+            }
+        })
+        .collect();
+
+    if let Some(ident) = get_from_ident(ast.attrs.iter()) {
+        from_ident = ident;
+    } else {
+        panic!("problem with from attribute");
+    }
+
+    let struct_ident = ast.ident;
+
+    let result_stream = quote! {
+        impl From<#from_ident> for #struct_ident {
+            fn from(source: #from_ident) -> Self {
+                Self {
+                    #(
+                        #fields_init
+                    )*
+                }
+            }
+        }
+    };
+
+    result_stream.into()
+
+    //println!("ast: {:#?}", ast);
+    //TokenStream::new()
 }
 
 // TODO: Make this return with Result instead of Option.
-fn get_from_ident(attrs: &Vec<Attribute>) -> Option<Ident> {
-    if attrs.len() < 1 {
-        return None;
-    }
-
+// TODO: Refactor.
+fn get_from_ident<'a, I>(mut attrs: I) -> Option<Ident>
+where
+    I: Iterator<Item = &'a Attribute>,
+{
     // Get the first "From" Type Attribute
-    let attr = attrs.iter().find(|attr| {
+    let attr = attrs.find(|attr| {
         match attr
             .path
             .segments
@@ -75,8 +119,5 @@ fn get_from_ident(attrs: &Vec<Attribute>) -> Option<Ident> {
         }
     }
 
-    //if from_tokens.clone().into_iter().len() != 1 {
-    //}
-
-    None
+    from_idents.first().and_then(|ident| Some(ident.clone()))
 }

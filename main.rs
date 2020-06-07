@@ -1,3 +1,4 @@
+use dtos::FirstDto;
 struct FirstModel {
     name: String,
 }
@@ -19,9 +20,9 @@ impl FirstModel {
 }
 fn main() {
     let model = FirstModel::new("kumarmo2".to_string());
-    let model2 = SecondModel::new("kumarmo2".to_string());
-    println!("{}", model.name);
-    println!("{}", model2.name);
+    let dto: FirstDto = FirstDto::from(model);
+
+    println!("dto.name{}", dto.name);
 
     // First Test: return nothing.
     // Second Test: must send the <from> attribute.
@@ -36,7 +37,7 @@ mod dtos {
     // #[from(FirstModel, SecondModel)]
     #[from(FirstModel)]
     //TODO: use fully qualified name for FirstModel as well.
-    struct FirstDto {
-        name: String,
+    pub struct FirstDto {
+        pub name: String,
     }
 }

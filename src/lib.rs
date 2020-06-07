@@ -10,7 +10,8 @@ use syn::{
 #[proc_macro_derive(Mapper, attributes(from))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
-    let from_ident;
+    // let from_ident;
+    let from_idents: Vec<Ident>;
     let data: DataStruct;
     let named_fields: FieldsNamed;
 
@@ -40,15 +41,25 @@ pub fn derive(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    if let Some(ident) = get_from_ident(ast.attrs.iter()) {
-        from_ident = ident;
+    if let Some(idents) = get_from_ident(ast.attrs.iter()) {
+        if idents.len() < 1 {
+            panic!("No from type provided");
+        }
+        from_idents = idents;
+    /*
+    match idents.into_iter().nth(0) {
+        Some(first) => from_ident = first,
+        _ => panic!("No From attribute provided"),
+    }
+    */
     } else {
         panic!("problem with from attribute");
     }
 
     let struct_ident = ast.ident;
 
-    let result_stream = quote! {
+    let from_definitions = from_idents.iter().map(|from_ident| {
+        quote! {
         impl From<#from_ident> for #struct_ident {
             fn from(source: #from_ident) -> Self {
                 Self {
@@ -58,6 +69,24 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             }
         }
+        }
+    });
+
+    let result_stream = quote! {
+        /*
+        impl From<#from_ident> for #struct_ident {
+            fn from(source: #from_ident) -> Self {
+                Self {
+                    #(
+                        #fields_init
+                    )*
+                }
+            }
+        }
+        */
+        #(
+            #from_definitions
+        )*
     };
 
     result_stream.into()
@@ -68,7 +97,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
 // TODO: Make this return with Result instead of Option.
 // TODO: Refactor.
-fn get_from_ident<'a, I>(mut attrs: I) -> Option<Ident>
+fn get_from_ident<'a, I>(mut attrs: I) -> Option<Vec<Ident>>
 where
     I: Iterator<Item = &'a Attribute>,
 {
@@ -118,6 +147,7 @@ where
             return None;
         }
     }
+    Some(from_idents)
 
-    from_idents.first().and_then(|ident| Some(ident.clone()))
+    //from_idents.first().and_then(|ident| Some(ident.clone()))
 }

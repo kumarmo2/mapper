@@ -1,5 +1,7 @@
 #[macro_use]
 use proc_macro::TokenStream;
+use proc_macro2::TokenTree as TokenTree2;
+
 use syn::{parse_macro_input, Attribute, DeriveInput, Ident};
 
 #[proc_macro_derive(Mapper, attributes(from))]
@@ -39,13 +41,42 @@ fn get_from_ident(attrs: &Vec<Attribute>) -> Option<Ident> {
         }
     })?;
 
-    let from_tokens = &attr.tokens;
+    let mut tokens = attr.tokens.clone().into_iter();
+    let from_type_token;
+    if let Some(t) = tokens.nth(0) {
+        from_type_token = t;
+    } else {
+        return None;
+    }
 
-    /*
-        if from_tokens.iter().len() != 1 {
+    let from_idents: Vec<Ident>;
+    match from_type_token {
+        TokenTree2::Group(g) => {
+            from_idents = g
+                .stream()
+                .into_iter()
+                .filter(|tt| match tt {
+                    TokenTree2::Ident(_) => true,
+                    _ => false,
+                })
+                .map(|tt| {
+                    match tt {
+                        TokenTree2::Ident(ident) => ident,
+                        _ => {
+                            //TODO: refactor this.
+                            panic!("Will not be executed ever.");
+                        }
+                    }
+                })
+                .collect();
+        }
+        _ => {
             return None;
         }
-    */
+    }
+
+    //if from_tokens.clone().into_iter().len() != 1 {
+    //}
 
     None
 }

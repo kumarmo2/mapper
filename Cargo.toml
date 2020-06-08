@@ -18,3 +18,5 @@ syn = {version = "1.0.17", features = ["extra-traits"]}
 proc-macro2 = "1.0.10"
 quote = "1.0.3"
 
+[dev-dependencies]
+trybuild = "1.0"

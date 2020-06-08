@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use proc_macro2::{TokenStream as TokenStream2, TokenTree as TokenTree2};
+use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree as TokenTree2};
 use quote::quote;
 
 use syn::{
@@ -39,8 +39,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let data: DataStruct;
     let named_fields: FieldsNamed;
 
-    // println!("ast: {:#?}", ast);
-
     match ast.data {
         Data::Struct(d) => {
             data = d;
@@ -68,15 +66,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .collect();
 
     let from_types;
-    if let Some(f) = get_from_types(ast.attrs.iter()) {
-        from_types = f;
-    } else {
-        //TODO: After, the return type of get_from_types has been updated to Result, use Error from
-        //it for the error message.
-        panic!("error parsing the from types");
+    match get_from_types(ast.attrs.iter()) {
+        Ok(f) => {
+            from_types = f;
+        }
+        Err(reason) => {
+            return syn::Error::new(Span::call_site(), reason)
+                .to_compile_error()
+                .into()
+        }
     }
-
-    // println!("from_types: {:#?}", from_types);
 
     let struct_ident = ast.ident;
 
@@ -102,13 +101,13 @@ pub fn derive(input: TokenStream) -> TokenStream {
     result_stream.into()
 }
 
-// TODO: Make this return with Result instead of Option.
-fn get_from_types<'a, I>(mut attrs: I) -> Option<Punctuated<Path, Comma>>
+fn get_from_types<'a, I>(mut attrs: I) -> std::result::Result<Punctuated<Path, Comma>, &'static str>
 where
     I: Iterator<Item = &'a Attribute>,
 {
     // Get the first "From" Type Attribute
-    let attr = attrs.find(|attr| {
+    let attr;
+    match attrs.find(|attr| {
         match attr
             .path
             .segments
@@ -118,14 +117,17 @@ where
             Some(_) => true,
             None => false,
         }
-    })?;
+    }) {
+        Some(a) => attr = a,
+        None => return Err("from attribute is compulsory"),
+    }
 
     let mut tokens = attr.tokens.clone().into_iter();
     let from_type_token;
     if let Some(t) = tokens.nth(0) {
         from_type_token = t;
     } else {
-        return None;
+        return Err("No valid from attribute found");
     }
 
     match from_type_token {
@@ -134,15 +136,15 @@ where
             let wrapper: Result<PuctuatedParser<Path, Comma>> = parse2(ts);
             match wrapper {
                 Ok(r) => {
-                    return Some(r.punct);
+                    return Ok(r.punct);
                 }
                 Err(_) => {
-                    return None;
+                    return Err("could not parse the from attribute");
                 }
             }
         }
         _ => {
-            return None;
+            return Err("Invalid from attribute");
         }
     }
 }

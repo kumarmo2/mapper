@@ -1,6 +1,6 @@
 [package]
 name = "mapper"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["kumarmo2 <mohitkumar1015795@gmail.com>"]
 edition = "2018"
 
@@ -15,6 +15,6 @@ name = "mapper-test"
 
 [dependencies]
 syn = {version = "1.0.30", features = ["extra-traits"]}
-proc-macro2 = "1.0.10"
+proc-macro2 = "1.0.17"
 quote = "1.0.6"
 

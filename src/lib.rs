@@ -1,19 +1,45 @@
-#[macro_use]
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree as TokenTree2};
 use quote::quote;
 
 use syn::{
-    parse_macro_input, Attribute, Data, DataStruct, DeriveInput, Fields, FieldsNamed, Ident,
+    parse::{Parse, ParseStream},
+    parse2, parse_macro_input,
+    punctuated::Punctuated,
+    token::Comma,
+    Attribute, Data, DataStruct, DeriveInput, Fields, FieldsNamed, Path, Result,
 };
+
+#[derive(Debug)]
+struct PuctuatedParser<T, P>
+where
+    T: Parse,
+    P: Parse,
+{
+    punct: Punctuated<T, P>,
+}
+
+impl<T, P> Parse for PuctuatedParser<T, P>
+where
+    T: Parse,
+    P: Parse,
+{
+    fn parse(input: ParseStream) -> Result<Self> {
+        let result: Result<Punctuated<T, P>> = Punctuated::parse_terminated(input);
+        match result {
+            Ok(p) => Ok(PuctuatedParser { punct: p }),
+            Err(_) => panic!("some error"),
+        }
+    }
+}
 
 #[proc_macro_derive(Mapper, attributes(from))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
-    // let from_ident;
-    let from_idents: Vec<Ident>;
     let data: DataStruct;
     let named_fields: FieldsNamed;
+
+    // println!("ast: {:#?}", ast);
 
     match ast.data {
         Data::Struct(d) => {
@@ -41,63 +67,41 @@ pub fn derive(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    if let Some(idents) = get_from_ident(ast.attrs.iter()) {
-        if idents.len() < 1 {
-            panic!("No from type provided");
-        }
-        from_idents = idents;
-    /*
-    match idents.into_iter().nth(0) {
-        Some(first) => from_ident = first,
-        _ => panic!("No From attribute provided"),
-    }
-    */
+    let from_types;
+    if let Some(f) = get_from_types(ast.attrs.iter()) {
+        from_types = f;
     } else {
-        panic!("problem with from attribute");
+        panic!("error parsing the from types");
     }
+
+    // println!("from_types: {:#?}", from_types);
 
     let struct_ident = ast.ident;
 
-    let from_definitions = from_idents.iter().map(|from_ident| {
+    let from_definitions2 = from_types.iter().map(|ty| {
         quote! {
-        impl From<#from_ident> for #struct_ident {
-            fn from(source: #from_ident) -> Self {
-                Self {
-                    #(
-                        #fields_init
-                    )*
+            impl From<#ty> for #struct_ident {
+                fn from(source: #ty) -> Self {
+                    Self {
+                        #(
+                            #fields_init
+                        )*
+                    }
                 }
             }
-        }
         }
     });
 
     let result_stream = quote! {
-        /*
-        impl From<#from_ident> for #struct_ident {
-            fn from(source: #from_ident) -> Self {
-                Self {
-                    #(
-                        #fields_init
-                    )*
-                }
-            }
-        }
-        */
         #(
-            #from_definitions
+            #from_definitions2
         )*
     };
-
     result_stream.into()
-
-    //println!("ast: {:#?}", ast);
-    //TokenStream::new()
 }
 
 // TODO: Make this return with Result instead of Option.
-// TODO: Refactor.
-fn get_from_ident<'a, I>(mut attrs: I) -> Option<Vec<Ident>>
+fn get_from_types<'a, I>(mut attrs: I) -> Option<Punctuated<Path, Comma>>
 where
     I: Iterator<Item = &'a Attribute>,
 {
@@ -122,32 +126,21 @@ where
         return None;
     }
 
-    let from_idents: Vec<Ident>;
     match from_type_token {
         TokenTree2::Group(g) => {
-            from_idents = g
-                .stream()
-                .into_iter()
-                .filter(|tt| match tt {
-                    TokenTree2::Ident(_) => true,
-                    _ => false,
-                })
-                .map(|tt| {
-                    match tt {
-                        TokenTree2::Ident(ident) => ident,
-                        _ => {
-                            //TODO: refactor this.
-                            panic!("Will not be executed ever.");
-                        }
-                    }
-                })
-                .collect();
+            let ts: TokenStream2 = g.stream();
+            let wrapper: Result<PuctuatedParser<Path, Comma>> = parse2(ts);
+            match wrapper {
+                Ok(r) => {
+                    return Some(r.punct);
+                }
+                Err(_) => {
+                    return None;
+                }
+            }
         }
         _ => {
             return None;
         }
     }
-    Some(from_idents)
-
-    //from_idents.first().and_then(|ident| Some(ident.clone()))
 }

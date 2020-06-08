@@ -28,7 +28,7 @@ where
         let result: Result<Punctuated<T, P>> = Punctuated::parse_terminated(input);
         match result {
             Ok(p) => Ok(PuctuatedParser { punct: p }),
-            Err(_) => panic!("some error"),
+            Err(_) => panic!("Could not parse the from attribute"),
         }
     }
 }
@@ -71,6 +71,8 @@ pub fn derive(input: TokenStream) -> TokenStream {
     if let Some(f) = get_from_types(ast.attrs.iter()) {
         from_types = f;
     } else {
+        //TODO: After, the return type of get_from_types has been updated to Result, use Error from
+        //it for the error message.
         panic!("error parsing the from types");
     }
 
@@ -78,7 +80,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let struct_ident = ast.ident;
 
-    let from_definitions2 = from_types.iter().map(|ty| {
+    let from_definitions = from_types.iter().map(|ty| {
         quote! {
             impl From<#ty> for #struct_ident {
                 fn from(source: #ty) -> Self {
@@ -94,7 +96,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let result_stream = quote! {
         #(
-            #from_definitions2
+            #from_definitions
         )*
     };
     result_stream.into()

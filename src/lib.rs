@@ -1,3 +1,6 @@
+mod parse_helpers;
+
+use parse_helpers::FieldModifier;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenTree as TokenTree2};
 use quote::quote;
@@ -29,7 +32,7 @@ where
     }
 }
 
-#[proc_macro_derive(Mapper, attributes(from))]
+#[proc_macro_derive(Mapper, attributes(from, mapper))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
 
@@ -49,9 +52,33 @@ pub fn derive(input: TokenStream) -> TokenStream {
         .named
         .iter()
         .map(|f| {
-            let ident = f.ident.as_ref();
+            let mapper_attr = f.attrs.iter().find(|attr| {
+                attr.path
+                    .segments
+                    .iter()
+                    .nth(0)
+                    .map_or(false, |segment| segment.ident.to_string() == "mapper")
+            });
+
+            let modifier = if let Some(attr) = mapper_attr {
+                match attr.parse_args::<FieldModifier>() {
+                    Ok(r) => Some(r),
+                    Err(reason) => return reason.to_compile_error().into(),
+                }
+            } else {
+                None
+            };
+
+            let ident = if let Some(ref fm) = modifier {
+                fm.use_fields.first()
+            } else {
+                f.ident.as_ref()
+            };
+
+            let dest_field_ident = f.ident.as_ref();
+
             quote! {
-                #ident: source.#ident,
+                #dest_field_ident: source.#ident,
             }
         })
         .collect();

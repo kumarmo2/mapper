@@ -2,27 +2,29 @@ use dtos::FirstDto;
 mod models {
     pub struct FirstModel {
         pub name: String,
+        pub model_id: i32,
     }
 
     pub struct SecondModel {
         pub name: String,
+        pub model_id: i32,
     }
 
     impl SecondModel {
-        pub fn new(name: String) -> Self {
-            Self { name }
+        pub fn new(name: String, id: i32) -> Self {
+            Self { name, model_id: id }
         }
     }
 
     impl FirstModel {
-        pub fn new(name: String) -> Self {
-            Self { name }
+        pub fn new(name: String, id: i32) -> Self {
+            Self { name, model_id: id }
         }
     }
 }
 fn main() {
-    let model = models::SecondModel::new("kumarmo2".to_string());
-    let model2 = models::FirstModel::new("mohit".to_string());
+    let model = models::SecondModel::new("kumarmo2".to_string(), 12);
+    let model2 = models::FirstModel::new("mohit".to_string(), 32);
 
     let dto = FirstDto::from(model);
     let dto2 = FirstDto::from(model2);
@@ -47,5 +49,7 @@ mod dtos {
     #[from(models::FirstModel, models::SecondModel)]
     pub struct FirstDto {
         pub name: String,
+        #[mapper(use_field = [model_id, model_id])]
+        pub id: i32,
     }
 }

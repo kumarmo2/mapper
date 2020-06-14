@@ -1,4 +1,4 @@
 {
-  "rust-analyzer.inlayHints.enable": true,
-  "rust-analyzer.callInfo.full": true
+  "rust-analyzer.inlayHints.enable": true
+  //   "rust-analyzer.callInfo.full": true
 }

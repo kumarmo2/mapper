@@ -29,13 +29,9 @@ where
     P: Parse,
 {
     fn parse(input: ParseStream) -> Result<Self> {
-        // Punctuated::parse_terminated(input).map(|p| PunctuatedParser { punct: p })
         match Punctuated::parse_terminated(input) {
             Ok(r) => Ok(PunctuatedParser { punct: r }),
-            Err(reason) => {
-                // println!("====failed====: {:#?}", reason);
-                Err(reason)
-            }
+            Err(reason) => Err(reason),
         }
     }
 }
@@ -102,34 +98,61 @@ pub fn derive(input: TokenStream) -> TokenStream {
             .iter()
             .map(|f| {
                 let field_modifier = map.get(f.ident.as_ref().unwrap());
-                let ident = field_modifier.map_or_else(
-                    || Some(f.ident.as_ref().unwrap().clone()),
-                    |fm| {
-                        fm.mapper_options
-                            .iter()
-                            .find(|mo| match mo {
-                                MapperOptions::UseFields(_) => true,
-                                _ => false,
-                            })
-                            .map_or_else(
-                                || Some(f.ident.as_ref().unwrap().clone()),
-                                |mo| {
-                                    if let MapperOptions::UseFields(uf) = mo.clone() {
-                                        uf.use_fields.iter().nth(from_type_index).map_or_else(
-                                            || Some(f.ident.as_ref().unwrap().clone()),
-                                            |ident| Some(ident.clone()),
-                                        )
-                                    } else {
-                                        panic!("cannot reach here");
-                                    }
-                                },
-                            )
-                    },
-                );
                 let dest_field_ident = f.ident.as_ref();
-
-                quote! {
-                    #dest_field_ident: source.#ident,
+                if let None = field_modifier {
+                    let ident = f.ident.as_ref();
+                    return quote! {
+                        #dest_field_ident: source.#ident,
+                    };
+                } else {
+                    let fm = field_modifier.unwrap();
+                    let use_fields = fm.mapper_options.iter().find(|mo| match mo {
+                        MapperOptions::UseFields(_) => true,
+                        _ => false,
+                    });
+                    let use_fns = fm.mapper_options.iter().find(|mo| match mo {
+                        MapperOptions::UseFns(_) => true,
+                        _ => false,
+                    });
+                    let field_ident = use_fields.map_or_else(
+                        || Some(f.ident.as_ref().unwrap().clone()),
+                        |mo| {
+                            if let MapperOptions::UseFields(uf) = mo.clone() {
+                                uf.use_fields.iter().nth(from_type_index).map_or_else(
+                                    || Some(f.ident.as_ref().unwrap().clone()),
+                                    |ident| Some(ident.clone()),
+                                )
+                            } else {
+                                panic!("cannot reach here");
+                            }
+                        },
+                    );
+                    let dest_field_ident = f.ident.as_ref();
+                    match use_fns {
+                        None => {
+                            quote! {
+                                #dest_field_ident: source.#field_ident,
+                            }
+                        }
+                        Some(uf) => {
+                            if let MapperOptions::UseFns(uf) = uf {
+                                uf.use_fns.iter().nth(from_type_index).map_or_else(
+                                    || {
+                                        quote! {
+                                            #dest_field_ident: source.#field_ident,
+                                        }
+                                    },
+                                    |path| {
+                                        quote! {
+                                            #dest_field_ident: #path(source.#field_ident)
+                                        }
+                                    },
+                                )
+                            } else {
+                                panic!("cannot reach here");
+                            }
+                        }
+                    }
                 }
             })
             .collect();

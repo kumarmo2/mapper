@@ -1,42 +1,26 @@
 use mapper::Mapper;
 
 struct Source {
-    user_id: i32,
+    user_id: u32,
 }
 
 struct FirstSource {
-    room_id: i32,
+    room_id: u64,
     name: String,
 }
 
 #[derive(Mapper)]
 #[from(Source, FirstSource)]
 struct Destination {
-    #[mapper(use_fns = [to_u32], use_fields=[user_id, room_id])]
+    #[mapper(use_fns = [to_u32, utils::from_u64_to_i32], use_fields=[user_id, room_id])]
     id: i32,
 }
 
-/*
-
-    FieldModifier {
-        modifiers: Vec<MapperOptions>
+mod utils {
+    pub fn from_u64_to_i32(num: u64) -> i32 {
+        num as i32
     }
-
-    enum MapperOptions{
-        UseFields()
-        UseFns()
-    }
-
-    UseField {
-        pub key: Ident
-        pub use_fields: Punctuated<Ident, Comma>,
-    }
-
-    UseFn {
-        pub key: Ident,
-        pub use_fns: Punctuated<Path, Comma>,
-    }
-*/
+}
 
 fn to_u32(from: u32) -> i32 {
     from as i32

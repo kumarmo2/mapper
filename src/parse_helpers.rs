@@ -74,7 +74,7 @@ impl Parse for FieldModifier {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let punctuated_parser: PunctuatedParser<MapperOptions, Comma> = input.parse()?;
         let mapper_options: Vec<MapperOptions> = punctuated_parser.punct.into_iter().collect();
-        println!("fm: {:#?}", mapper_options);
+        // println!("fm: {:#?}", mapper_options);
         Ok(Self {
             mapper_options: mapper_options,
         })

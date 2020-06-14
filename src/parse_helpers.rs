@@ -8,7 +8,7 @@ use syn::{
     Ident, Token,
 };
 // TODO: check if we can remove the public access modifiers.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FieldModifier {
     pub use_fields: Punctuated<Ident, Comma>,
 }
@@ -16,7 +16,7 @@ pub struct FieldModifier {
 impl Parse for FieldModifier {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let use_field_key: Ident = input.parse()?;
-        if use_field_key.to_string() != "use_field" {
+        if use_field_key.to_string() != "use_fields" {
             return Err(syn::Error::new(
                 Span::call_site(),
                 "expected use_field key in the mapper attribute",

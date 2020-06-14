@@ -4,13 +4,14 @@ use parse_helpers::FieldModifier;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenTree as TokenTree2};
 use quote::quote;
+use std::collections::HashMap;
 
 use syn::{
     parse::{Parse, ParseStream},
     parse2, parse_macro_input,
     punctuated::Punctuated,
     token::Comma,
-    Attribute, Data, DeriveInput, Error, Fields, Path, Result,
+    Attribute, Data, DeriveInput, Error, Fields, Ident, Path, Result,
 };
 
 #[derive(Debug)]
@@ -48,40 +49,26 @@ pub fn derive(input: TokenStream) -> TokenStream {
         _ => panic!("only named fields are required"),
     };
 
-    let fields_init: Vec<_> = named_fields
-        .named
-        .iter()
-        .map(|f| {
-            let mapper_attr = f.attrs.iter().find(|attr| {
-                attr.path
-                    .segments
-                    .iter()
-                    .nth(0)
-                    .map_or(false, |segment| segment.ident.to_string() == "mapper")
-            });
+    let mut map: HashMap<Ident, FieldModifier> = HashMap::new();
 
-            let modifier = if let Some(attr) = mapper_attr {
-                match attr.parse_args::<FieldModifier>() {
-                    Ok(r) => Some(r),
-                    Err(reason) => return reason.to_compile_error().into(),
+    for f in named_fields.named.iter() {
+        let mapper_attr = f.attrs.iter().find(|attr| {
+            attr.path
+                .segments
+                .iter()
+                .nth(0)
+                .map_or(false, |segment| segment.ident.to_string() == "mapper")
+        });
+
+        if let Some(attr) = mapper_attr {
+            match attr.parse_args::<FieldModifier>() {
+                Ok(r) => {
+                    map.insert(f.ident.as_ref().unwrap().clone(), r);
                 }
-            } else {
-                None
-            };
-
-            let ident = if let Some(ref fm) = modifier {
-                fm.use_fields.first()
-            } else {
-                f.ident.as_ref()
-            };
-
-            let dest_field_ident = f.ident.as_ref();
-
-            quote! {
-                #dest_field_ident: source.#ident,
+                Err(reason) => return reason.to_compile_error().into(),
             }
-        })
-        .collect();
+        }
+    }
 
     let from_types = match get_from_types(ast.attrs.iter()) {
         Ok(f) => f,
@@ -90,7 +77,30 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let struct_ident = ast.ident;
 
-    let from_definitions = from_types.iter().map(|ty| {
+    let from_definitions = from_types.iter().enumerate().map(|(from_type_index, ty)| {
+        let fields_init: Vec<_> = named_fields
+            .named
+            .iter()
+            .map(|f| {
+                let field_modifier = map.get(f.ident.as_ref().unwrap());
+                let ident = field_modifier.map_or_else(
+                    || f.ident.as_ref(),
+                    |fm| {
+                        if from_type_index < fm.use_fields.len() {
+                            let ident = fm.use_fields.iter().nth(from_type_index).unwrap();
+                            Some(ident)
+                        } else {
+                            f.ident.as_ref()
+                        }
+                    },
+                );
+                let dest_field_ident = f.ident.as_ref();
+
+                quote! {
+                    #dest_field_ident: source.#ident,
+                }
+            })
+            .collect();
         quote! {
             impl From<#ty> for #struct_ident {
                 fn from(source: #ty) -> Self {

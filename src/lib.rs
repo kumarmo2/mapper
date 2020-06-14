@@ -1,13 +1,17 @@
+mod parse_helpers;
+
+use parse_helpers::FieldModifier;
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenTree as TokenTree2};
 use quote::quote;
+use std::collections::HashMap;
 
 use syn::{
     parse::{Parse, ParseStream},
     parse2, parse_macro_input,
     punctuated::Punctuated,
     token::Comma,
-    Attribute, Data, DeriveInput, Error, Fields, Path, Result,
+    Attribute, Data, DeriveInput, Error, Fields, Ident, Path, Result,
 };
 
 #[derive(Debug)]
@@ -29,7 +33,7 @@ where
     }
 }
 
-#[proc_macro_derive(Mapper, attributes(from))]
+#[proc_macro_derive(Mapper, attributes(from, mapper))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
 
@@ -45,13 +49,33 @@ pub fn derive(input: TokenStream) -> TokenStream {
         _ => panic!("only named fields are required"),
     };
 
-    let fields_init: Vec<_> = named_fields
+    let map: HashMap<Ident, FieldModifier> = named_fields
         .named
         .iter()
+        .filter(|f| {
+            f.attrs.iter().any(|attr| {
+                attr.path
+                    .segments
+                    .iter()
+                    .nth(0)
+                    .map_or(false, |segment| segment.ident.to_string() == "mapper")
+            })
+        })
         .map(|f| {
-            let ident = f.ident.as_ref();
-            quote! {
-                #ident: source.#ident,
+            let mapper_attr = f
+                .attrs
+                .iter()
+                .find(|attr| {
+                    attr.path
+                        .segments
+                        .iter()
+                        .nth(0)
+                        .map_or(false, |segment| segment.ident.to_string() == "mapper")
+                })
+                .unwrap();
+            match mapper_attr.parse_args::<FieldModifier>() {
+                Ok(fm) => (f.ident.as_ref().unwrap().clone(), fm), //returning a tuple so that it can be collected into a HashMap.
+                Err(_) => panic!("error parsing the mapper attribute"),
             }
         })
         .collect();
@@ -63,7 +87,28 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let struct_ident = ast.ident;
 
-    let from_definitions = from_types.iter().map(|ty| {
+    let from_definitions = from_types.iter().enumerate().map(|(from_type_index, ty)| {
+        let fields_init: Vec<_> = named_fields
+            .named
+            .iter()
+            .map(|f| {
+                let field_modifier = map.get(f.ident.as_ref().unwrap());
+                let ident = field_modifier.map_or_else(
+                    || f.ident.as_ref(),
+                    |fm| {
+                        fm.use_fields
+                            .iter()
+                            .nth(from_type_index)
+                            .map_or_else(|| f.ident.as_ref(), |ident| Some(ident))
+                    },
+                );
+                let dest_field_ident = f.ident.as_ref();
+
+                quote! {
+                    #dest_field_ident: source.#ident,
+                }
+            })
+            .collect();
         quote! {
             impl From<#ty> for #struct_ident {
                 fn from(source: #ty) -> Self {

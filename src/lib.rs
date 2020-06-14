@@ -49,26 +49,36 @@ pub fn derive(input: TokenStream) -> TokenStream {
         _ => panic!("only named fields are required"),
     };
 
-    let mut map: HashMap<Ident, FieldModifier> = HashMap::new();
-
-    for f in named_fields.named.iter() {
-        let mapper_attr = f.attrs.iter().find(|attr| {
-            attr.path
-                .segments
+    let map: HashMap<Ident, FieldModifier> = named_fields
+        .named
+        .iter()
+        .filter(|f| {
+            f.attrs.iter().any(|attr| {
+                attr.path
+                    .segments
+                    .iter()
+                    .nth(0)
+                    .map_or(false, |segment| segment.ident.to_string() == "mapper")
+            })
+        })
+        .map(|f| {
+            let mapper_attr = f
+                .attrs
                 .iter()
-                .nth(0)
-                .map_or(false, |segment| segment.ident.to_string() == "mapper")
-        });
-
-        if let Some(attr) = mapper_attr {
-            match attr.parse_args::<FieldModifier>() {
-                Ok(r) => {
-                    map.insert(f.ident.as_ref().unwrap().clone(), r);
-                }
-                Err(reason) => return reason.to_compile_error().into(),
+                .find(|attr| {
+                    attr.path
+                        .segments
+                        .iter()
+                        .nth(0)
+                        .map_or(false, |segment| segment.ident.to_string() == "mapper")
+                })
+                .unwrap();
+            match mapper_attr.parse_args::<FieldModifier>() {
+                Ok(fm) => (f.ident.as_ref().unwrap().clone(), fm), //returning a tuple so that it can be collected into a HashMap.
+                Err(_) => panic!("error parsing the mapper attribute"),
             }
-        }
-    }
+        })
+        .collect();
 
     let from_types = match get_from_types(ast.attrs.iter()) {
         Ok(f) => f,
@@ -86,12 +96,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 let ident = field_modifier.map_or_else(
                     || f.ident.as_ref(),
                     |fm| {
-                        if from_type_index < fm.use_fields.len() {
-                            let ident = fm.use_fields.iter().nth(from_type_index).unwrap();
-                            Some(ident)
-                        } else {
-                            f.ident.as_ref()
-                        }
+                        fm.use_fields
+                            .iter()
+                            .nth(from_type_index)
+                            .map_or_else(|| f.ident.as_ref(), |ident| Some(ident))
                     },
                 );
                 let dest_field_ident = f.ident.as_ref();

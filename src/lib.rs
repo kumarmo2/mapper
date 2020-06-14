@@ -1,17 +1,21 @@
+mod parse_helpers;
+
+use parse_helpers::FieldModifier;
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree as TokenTree2};
+use proc_macro2::{Span, TokenTree as TokenTree2};
 use quote::quote;
+use std::collections::HashMap;
 
 use syn::{
     parse::{Parse, ParseStream},
     parse2, parse_macro_input,
     punctuated::Punctuated,
     token::Comma,
-    Attribute, Data, DataStruct, DeriveInput, Fields, FieldsNamed, Path, Result,
+    Attribute, Data, DeriveInput, Error, Fields, Ident, Path, Result,
 };
 
 #[derive(Debug)]
-struct PuctuatedParser<T, P>
+struct PunctuatedParser<T, P>
 where
     T: Parse,
     P: Parse,
@@ -19,67 +23,92 @@ where
     punct: Punctuated<T, P>,
 }
 
-impl<T, P> Parse for PuctuatedParser<T, P>
+impl<T, P> Parse for PunctuatedParser<T, P>
 where
     T: Parse,
     P: Parse,
 {
     fn parse(input: ParseStream) -> Result<Self> {
-        let result: Result<Punctuated<T, P>> = Punctuated::parse_terminated(input);
-        match result {
-            Ok(p) => Ok(PuctuatedParser { punct: p }),
-            Err(_) => panic!("Could not parse the from attribute"),
-        }
+        Punctuated::parse_terminated(input).map(|p| PunctuatedParser { punct: p })
     }
 }
 
-#[proc_macro_derive(Mapper, attributes(from))]
+#[proc_macro_derive(Mapper, attributes(from, mapper))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
-    let data: DataStruct;
-    let named_fields: FieldsNamed;
 
-    match ast.data {
-        Data::Struct(d) => {
-            data = d;
-        }
+    let data = match ast.data {
+        Data::Struct(d) => d,
         _ => {
             panic!("Currently only supports Structs");
         }
-    }
+    };
 
-    match data.fields {
-        Fields::Named(f) => named_fields = f,
+    let named_fields = match data.fields {
+        Fields::Named(f) => f,
         _ => panic!("only named fields are required"),
-    }
+    };
 
-    let fields_init: Vec<TokenStream2> = named_fields
+    let map: HashMap<Ident, FieldModifier> = named_fields
         .named
-        .clone()
-        .into_iter()
+        .iter()
+        .filter(|f| {
+            f.attrs.iter().any(|attr| {
+                attr.path
+                    .segments
+                    .iter()
+                    .nth(0)
+                    .map_or(false, |segment| segment.ident.to_string() == "mapper")
+            })
+        })
         .map(|f| {
-            let ident = f.ident;
-            quote! {
-                #ident: source.#ident,
+            let mapper_attr = f
+                .attrs
+                .iter()
+                .find(|attr| {
+                    attr.path
+                        .segments
+                        .iter()
+                        .nth(0)
+                        .map_or(false, |segment| segment.ident.to_string() == "mapper")
+                })
+                .unwrap();
+            match mapper_attr.parse_args::<FieldModifier>() {
+                Ok(fm) => (f.ident.as_ref().unwrap().clone(), fm), //returning a tuple so that it can be collected into a HashMap.
+                Err(_) => panic!("error parsing the mapper attribute"),
             }
         })
         .collect();
 
-    let from_types;
-    match get_from_types(ast.attrs.iter()) {
-        Ok(f) => {
-            from_types = f;
-        }
-        Err(reason) => {
-            return syn::Error::new(Span::call_site(), reason)
-                .to_compile_error()
-                .into()
-        }
-    }
+    let from_types = match get_from_types(ast.attrs.iter()) {
+        Ok(f) => f,
+        Err(reason) => return reason.to_compile_error().into(),
+    };
 
     let struct_ident = ast.ident;
 
-    let from_definitions = from_types.iter().map(|ty| {
+    let from_definitions = from_types.iter().enumerate().map(|(from_type_index, ty)| {
+        let fields_init: Vec<_> = named_fields
+            .named
+            .iter()
+            .map(|f| {
+                let field_modifier = map.get(f.ident.as_ref().unwrap());
+                let ident = field_modifier.map_or_else(
+                    || f.ident.as_ref(),
+                    |fm| {
+                        fm.use_fields
+                            .iter()
+                            .nth(from_type_index)
+                            .map_or_else(|| f.ident.as_ref(), |ident| Some(ident))
+                    },
+                );
+                let dest_field_ident = f.ident.as_ref();
+
+                quote! {
+                    #dest_field_ident: source.#ident,
+                }
+            })
+            .collect();
         quote! {
             impl From<#ty> for #struct_ident {
                 fn from(source: #ty) -> Self {
@@ -101,50 +130,44 @@ pub fn derive(input: TokenStream) -> TokenStream {
     result_stream.into()
 }
 
-fn get_from_types<'a, I>(mut attrs: I) -> std::result::Result<Punctuated<Path, Comma>, &'static str>
+fn get_from_types<'a, I>(mut attrs: I) -> Result<Punctuated<Path, Comma>>
 where
     I: Iterator<Item = &'a Attribute>,
 {
     // Get the first "From" Type Attribute
-    let attr;
-    match attrs.find(|attr| {
-        match attr
-            .path
+    let attr = match attrs.find(|attr| {
+        attr.path
             .segments
             .iter()
             .find(|seg| seg.ident.to_string() == "from")
-        {
-            Some(_) => true,
-            None => false,
-        }
+            .map_or(false, |_| true)
     }) {
-        Some(a) => attr = a,
-        None => return Err("from attribute is compulsory"),
-    }
+        Some(a) => a,
+        None => {
+            return Err(Error::new(
+                Span::call_site(),
+                "from attribute is compulsory",
+            ))
+        }
+    };
 
     let mut tokens = attr.tokens.clone().into_iter();
-    let from_type_token;
-    if let Some(t) = tokens.nth(0) {
-        from_type_token = t;
+    let from_type_token = if let Some(t) = tokens.nth(0) {
+        t
     } else {
-        return Err("No valid from attribute found");
-    }
+        return Err(Error::new(
+            Span::call_site(),
+            "No valid from attribute found",
+        ));
+    };
 
     match from_type_token {
         TokenTree2::Group(g) => {
-            let ts: TokenStream2 = g.stream();
-            let wrapper: Result<PuctuatedParser<Path, Comma>> = parse2(ts);
-            match wrapper {
-                Ok(r) => {
-                    return Ok(r.punct);
-                }
-                Err(_) => {
-                    return Err("could not parse the from attribute");
-                }
-            }
+            let wrapper: Result<PunctuatedParser<Path, Comma>> = parse2(g.stream());
+            wrapper
+                .map(|r| r.punct)
+                .map_err(|_| Error::new(Span::call_site(), "could not parse the from attribute"))
         }
-        _ => {
-            return Err("Invalid from attribute");
-        }
+        _ => Err(Error::new(Span::call_site(), "Invalid from attribute")),
     }
 }

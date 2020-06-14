@@ -1,6 +1,6 @@
 mod parse_helpers;
 
-use parse_helpers::FieldModifier;
+use parse_helpers::{FieldModifier, MapperOptions};
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenTree as TokenTree2};
 use quote::quote;
@@ -29,13 +29,21 @@ where
     P: Parse,
 {
     fn parse(input: ParseStream) -> Result<Self> {
-        Punctuated::parse_terminated(input).map(|p| PunctuatedParser { punct: p })
+        // Punctuated::parse_terminated(input).map(|p| PunctuatedParser { punct: p })
+        match Punctuated::parse_terminated(input) {
+            Ok(r) => Ok(PunctuatedParser { punct: r }),
+            Err(reason) => {
+                // println!("====failed====: {:#?}", reason);
+                Err(reason)
+            }
+        }
     }
 }
 
 #[proc_macro_derive(Mapper, attributes(from, mapper))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = parse_macro_input!(input as DeriveInput);
+    let generics = ast.generics;
 
     let data = match ast.data {
         Data::Struct(d) => d,
@@ -49,6 +57,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         _ => panic!("only named fields are required"),
     };
 
+    // TODO: Try to remove the clones that I have added here.
     let map: HashMap<Ident, FieldModifier> = named_fields
         .named
         .iter()
@@ -94,12 +103,27 @@ pub fn derive(input: TokenStream) -> TokenStream {
             .map(|f| {
                 let field_modifier = map.get(f.ident.as_ref().unwrap());
                 let ident = field_modifier.map_or_else(
-                    || f.ident.as_ref(),
+                    || Some(f.ident.as_ref().unwrap().clone()),
                     |fm| {
-                        fm.use_fields
+                        fm.mapper_options
                             .iter()
-                            .nth(from_type_index)
-                            .map_or_else(|| f.ident.as_ref(), |ident| Some(ident))
+                            .find(|mo| match mo {
+                                MapperOptions::UseFields(_) => true,
+                                _ => false,
+                            })
+                            .map_or_else(
+                                || Some(f.ident.as_ref().unwrap().clone()),
+                                |mo| {
+                                    if let MapperOptions::UseFields(uf) = mo.clone() {
+                                        uf.use_fields.iter().nth(from_type_index).map_or_else(
+                                            || Some(f.ident.as_ref().unwrap().clone()),
+                                            |ident| Some(ident.clone()),
+                                        )
+                                    } else {
+                                        panic!("cannot reach here");
+                                    }
+                                },
+                            )
                     },
                 );
                 let dest_field_ident = f.ident.as_ref();
@@ -110,7 +134,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             })
             .collect();
         quote! {
-            impl From<#ty> for #struct_ident {
+            impl#generics From<#ty> for #struct_ident#generics {
                 fn from(source: #ty) -> Self {
                     Self {
                         #(

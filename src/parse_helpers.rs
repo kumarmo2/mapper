@@ -1,10 +1,11 @@
 use proc_macro2::{Span, TokenTree};
+use std::collections::HashMap;
 use syn::{
     parse::{Parse, ParseStream},
     parse2,
     punctuated::Punctuated,
     token::Comma,
-    Attribute, Error, Ident, Path, Result, Token,
+    Attribute, Error, FieldsNamed, Ident, Path, Result, Token,
 };
 
 #[derive(Debug)]
@@ -29,22 +30,22 @@ where
     }
 }
 // TODO: check if we can remove the public access modifiers.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct FieldModifier {
     pub mapper_options: Vec<MapperOptions>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct UseFns {
     pub key: Ident,
     pub use_fns: Punctuated<Path, Comma>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct UseFields {
     pub key: Ident,
     pub use_fields: Punctuated<Ident, Comma>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum MapperOptions {
     UseFns(UseFns),
     UseFields(UseFields),
@@ -54,8 +55,8 @@ pub enum MapperOptions {
 impl Parse for MapperOptions {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let key: Ident = input.parse()?;
+        input.parse::<Token!(=)>()?;
         if key.to_string() == "use_fields" {
-            input.parse::<Token!(=)>()?;
             let use_fields_tokens = input.parse::<TokenTree>()?;
             match use_fields_tokens {
                 TokenTree::Group(g) => {
@@ -69,9 +70,8 @@ impl Parse for MapperOptions {
                 _ => Err(syn::Error::new(Span::call_site(), "Expected a group")),
             }
         } else if key.to_string() == "use_fns" {
-            input.parse::<Token!(=)>()?;
-            let use_fields_tokens = input.parse::<TokenTree>()?;
-            match use_fields_tokens {
+            let use_fns_tokens = input.parse::<TokenTree>()?;
+            match use_fns_tokens {
                 TokenTree::Group(g) => {
                     let paths: PunctuatedParser<Path, Comma> = parse2(g.stream())?;
                     let use_fns = UseFns {
@@ -141,4 +141,31 @@ where
         }
         _ => Err(Error::new(Span::call_site(), "Invalid from attribute")),
     }
+}
+
+pub fn get_field_to_field_modifier_map(
+    named_fields: &FieldsNamed,
+) -> HashMap<Ident, FieldModifier> {
+    let map: HashMap<Ident, FieldModifier> = named_fields
+        .named
+        .iter()
+        .filter_map(|f| {
+            f.attrs
+                .iter()
+                .find(|attr| {
+                    attr.path
+                        .segments
+                        .iter()
+                        .nth(0)
+                        .map_or(false, |segment| segment.ident.to_string() == "mapper")
+                })
+                .and_then(|mapper_attr| {
+                    match mapper_attr.parse_args::<FieldModifier>() {
+                        Ok(fm) => Some((f.ident.as_ref().unwrap().clone(), fm)), //returning a tuple so that it can be collected into a HashMap.
+                        Err(_) => panic!("error parsing the mapper attribute"),
+                    }
+                })
+        })
+        .collect();
+    map
 }

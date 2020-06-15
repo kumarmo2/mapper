@@ -8,7 +8,7 @@ edition = "2018"
 
 [[bin]]
 name = "mapper-test"
-path = "tests/use-fn.rs"
+path = "tests/nested.rs"
 
 [lib]
 proc-macro = true

@@ -12,4 +12,5 @@ fn tests() {
     ts.pass("tests/source_with_qualified_name.rs");
     ts.pass("tests/with_lifetimes.rs");
     ts.pass("tests/use-fn.rs");
+    ts.pass("tests/nested.rs");
 }

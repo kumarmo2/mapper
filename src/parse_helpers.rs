@@ -1,12 +1,33 @@
-use crate::PunctuatedParser;
 use proc_macro2::{Span, TokenTree};
 use syn::{
     parse::{Parse, ParseStream},
     parse2,
     punctuated::Punctuated,
     token::Comma,
-    Ident, Path, Token,
+    Attribute, Error, Ident, Path, Result, Token,
 };
+
+#[derive(Debug)]
+pub struct PunctuatedParser<T, P>
+where
+    T: Parse,
+    P: Parse,
+{
+    pub punct: Punctuated<T, P>,
+}
+
+impl<T, P> Parse for PunctuatedParser<T, P>
+where
+    T: Parse,
+    P: Parse,
+{
+    fn parse(input: ParseStream) -> Result<Self> {
+        match Punctuated::parse_terminated(input) {
+            Ok(r) => Ok(PunctuatedParser { punct: r }),
+            Err(reason) => Err(reason),
+        }
+    }
+}
 // TODO: check if we can remove the public access modifiers.
 #[derive(Debug, Clone)]
 pub struct FieldModifier {
@@ -74,9 +95,50 @@ impl Parse for FieldModifier {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let punctuated_parser: PunctuatedParser<MapperOptions, Comma> = input.parse()?;
         let mapper_options: Vec<MapperOptions> = punctuated_parser.punct.into_iter().collect();
-        // println!("fm: {:#?}", mapper_options);
         Ok(Self {
             mapper_options: mapper_options,
         })
+    }
+}
+
+pub fn get_from_types<'a, I>(mut attrs: I) -> Result<Punctuated<Path, Comma>>
+where
+    I: Iterator<Item = &'a Attribute>,
+{
+    // Get the first "From" Type Attribute
+    let attr = match attrs.find(|attr| {
+        attr.path
+            .segments
+            .iter()
+            .find(|seg| seg.ident.to_string() == "from")
+            .map_or(false, |_| true)
+    }) {
+        Some(a) => a,
+        None => {
+            return Err(Error::new(
+                Span::call_site(),
+                "from attribute is compulsory",
+            ))
+        }
+    };
+
+    let mut tokens = attr.tokens.clone().into_iter();
+    let from_type_token = if let Some(t) = tokens.nth(0) {
+        t
+    } else {
+        return Err(Error::new(
+            Span::call_site(),
+            "No valid from attribute found",
+        ));
+    };
+
+    match from_type_token {
+        TokenTree::Group(g) => {
+            let wrapper: Result<PunctuatedParser<Path, Comma>> = parse2(g.stream());
+            wrapper
+                .map(|r| r.punct)
+                .map_err(|_| Error::new(Span::call_site(), "could not parse the from attribute"))
+        }
+        _ => Err(Error::new(Span::call_site(), "Invalid from attribute")),
     }
 }
